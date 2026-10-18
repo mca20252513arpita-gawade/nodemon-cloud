@@ -2,69 +2,154 @@ import { useEffect, useState, useCallback } from "react";
 import { get } from "./api.js";
 
 const POLL_MS = 5000;
-const STATUS_LABEL = { ok: "In place", alert: "Alert", missing: "Missing" };
-const EVENT_LABEL = { entry: "Entered", exit: "Left", tamper: "Tamper switch", silent: "Went silent", gateway_offline: "Gateway offline" };
+
+const ICONS = {
+  laptop: "M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16",
+  monitor: "M3 4h18v12H3zM8 20h8M12 16v4",
+  router: "M4 14h16v6H4zM8 17h.01M12 17h.01M8 14V8M16 14V8",
+  box: "M21 8 12 3 3 8v8l9 5 9-5zM3 8l9 5 9-5M12 13v8",
+  check: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM8 12l3 3 5-6",
+  alert: "M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01",
+  wifi: "M5 12.5a10 10 0 0 1 14 0M8.5 16a5 5 0 0 1 7 0M12 20h.01",
+  entry: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3",
+  exit: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
+  shield: "M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6zM12 8v5M12 16h.01",
+  clock: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
+  silent: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM4.9 4.9l14.2 14.2",
+  x: "M18 6 6 18M6 6l12 12",
+};
+const Icon = ({ name, size = 20 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+       strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={ICONS[name] || ICONS.box} /></svg>
+);
+const deviceIcon = (n = "") => (/laptop/i.test(n) ? "laptop" : /monitor|display/i.test(n) ? "monitor" : /router|switch/i.test(n) ? "router" : "box");
+
+const STATUS = {
+  ok: { label: "In place", tone: "ok" },
+  alert: { label: "Needs attention", tone: "bad" },
+  missing: { label: "Missing", tone: "warn" },
+};
+const EVENT = {
+  entry: { label: "entered", icon: "entry", tone: "ok" },
+  exit: { label: "left", icon: "exit", tone: "warn" },
+  tamper: { label: "tamper switch pressed in", icon: "shield", tone: "bad" },
+  silent: { label: "stopped reporting in", icon: "silent", tone: "warn" },
+  gateway_offline: { label: "gateway went offline in", icon: "wifi", tone: "bad" },
+};
 
 function useNow(ms = 1000) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const t = setInterval(() => setNow(Date.now()), ms); return () => clearInterval(t); }, [ms]);
   return now;
 }
-function age(iso, now) {
+function ago(iso, now) {
+  if (!iso) return "no signal yet";
   const s = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
   if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)} h ago`;
   return new Date(iso).toLocaleDateString();
 }
 
-function ZoneColumn({ zone, onPick }) {
-  const bad = zone.assets.filter((a) => a.status !== "ok").length;
+function Logo() {
   return (
-    <section className={`zone ${bad || !zone.gateway_online ? "zone-bad" : ""}`} aria-label={zone.zone_name}>
+    <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
+      <circle cx="17" cy="17" r="15.5" fill="none" stroke="#7fb0ff" strokeWidth="1.5" opacity=".55" />
+      <circle cx="17" cy="17" r="9.5" fill="none" stroke="#7fb0ff" strokeWidth="1.5" opacity=".8" />
+      <circle cx="17" cy="17" r="4" fill="#fff" />
+    </svg>
+  );
+}
+
+function StatusBand({ zones, loaded }) {
+  const assets = zones.flatMap((z) => z.assets);
+  const n = { ok: 0, alert: 0, missing: 0 };
+  assets.forEach((a) => { n[a.status] = (n[a.status] || 0) + 1; });
+  const flagged = n.alert + n.missing;
+  const offline = zones.filter((z) => !z.gateway_online).length;
+  const total = assets.length || 1;
+  let headline = "Checking your assets";
+  if (loaded) headline = flagged || offline ? "Something needs your attention" : "All assets are where they should be";
+  const parts = [
+    `${assets.length} asset${assets.length === 1 ? "" : "s"} tracked in ${zones.length} department${zones.length === 1 ? "" : "s"}`,
+    flagged ? `${flagged} flagged` : null,
+    offline ? `${offline} gateway${offline > 1 ? "s" : ""} offline` : null,
+  ].filter(Boolean);
+  return (
+    <section className={`band ${flagged || offline ? "band-bad" : ""}`} aria-live="polite">
+      <div className="wrap">
+        <h2>{headline}</h2>
+        <p>{loaded ? parts.join(", ") : "Loading live data"}</p>
+        <div className="bar" role="img" aria-label={`${n.ok} in place, ${n.alert} need attention, ${n.missing} missing`}>
+          <span className="seg ok" style={{ flex: n.ok / total }} />
+          <span className="seg bad" style={{ flex: n.alert / total }} />
+          <span className="seg warn" style={{ flex: n.missing / total }} />
+        </div>
+        <ul className="legend">
+          <li><i className="dot ok" />{n.ok} in place</li>
+          <li><i className="dot bad" />{n.alert} need attention</li>
+          <li><i className="dot warn" />{n.missing} missing</li>
+        </ul>
+      </div>
+    </section>
+  );
+}
+
+function Zone({ zone, now, onPick }) {
+  const flagged = zone.assets.filter((a) => a.status !== "ok").length;
+  return (
+    <section className="zone" aria-label={zone.zone_name}>
       <header>
-        <h2>{zone.zone_name}</h2>
-        <p>
-          <span className={`pill ${zone.gateway_online ? "pill-ok" : "pill-bad"}`}>
-            {zone.gateway_online ? "Gateway online" : "Gateway offline"}
-          </span>{" "}
-          {bad ? `${bad} of ${zone.assets.length} need attention` : `All ${zone.assets.length} assets in place`}
-        </p>
+        <div>
+          <h3>{zone.zone_name}</h3>
+          <p className="sub">{flagged ? `${flagged} of ${zone.assets.length} need attention` : zone.assets.length ? "Everything in place" : "No assets assigned"}</p>
+        </div>
+        <span className={`pill ${zone.gateway_online ? "ok" : "bad"}`}><Icon name="wifi" size={15} />{zone.gateway_online ? "Gateway online" : "Gateway offline"}</span>
       </header>
       <ul>
-        {zone.assets.map((a) => (
-          <li key={a.asset_id}>
-            <button className={`asset s-${a.status}`} onClick={() => onPick(a.asset_id)} aria-label={`History for ${a.asset_name}`}>
-              <span className="dot" aria-hidden="true" />
-              <span className="name">{a.asset_name}{a.checked_out && <em className="co"> · checked out</em>}</span>
-              <span className="badge">{STATUS_LABEL[a.status] || a.status}</span>
-            </button>
-          </li>
-        ))}
-        {zone.assets.length === 0 && <li className="empty">No assets assigned to this zone.</li>}
+        {zone.assets.map((a) => {
+          const st = STATUS[a.status] || STATUS.ok;
+          return (
+            <li key={a.asset_id}>
+              <button className="asset" onClick={() => onPick(a.asset_id)}>
+                <span className={`tile ${st.tone}`}><Icon name={deviceIcon(a.asset_name)} /></span>
+                <span className="meta">
+                  <strong>{a.asset_name}</strong>
+                  <span>{a.checked_out ? "Checked out with approval" : `Last seen ${ago(a.last_seen, now)}`}</span>
+                </span>
+                <span className={`badge ${st.tone}`}>{st.label}</span>
+              </button>
+            </li>
+          );
+        })}
+        {!zone.assets.length && <li className="empty">Assign an asset to this department to start tracking.</li>}
       </ul>
     </section>
   );
 }
 
-function EventList({ items, now, empty }) {
+function Feed({ items, now, names, empty }) {
   if (!items.length) return <p className="empty">{empty}</p>;
   return (
-    <ol className="events">
-      {items.map((e) => (
-        <li key={e.id} className={e.is_anomaly ? "anomaly" : ""}>
-          <div>
-            <strong>{e.asset_name}</strong>
-            <span>{EVENT_LABEL[e.event_type] || e.event_type} · {e.zone_id}</span>
-          </div>
-          <time dateTime={e.created_at} title={new Date(e.created_at).toLocaleString()}>{age(e.created_at, now)}</time>
-        </li>
-      ))}
+    <ol className="feed">
+      {items.map((e) => {
+        const ev = EVENT[e.event_type] || { label: e.event_type, icon: "box", tone: "warn" };
+        return (
+          <li key={e.id}>
+            <span className={`ico ${e.is_anomaly ? "bad" : ev.tone === "bad" ? "bad" : "ok"}`}><Icon name={ev.icon} size={17} /></span>
+            <div>
+              <strong>{e.asset_name}</strong>
+              <span>{ev.label} {names[e.zone_id] || e.zone_id}{e.is_anomaly && e.event_type !== "tamper" && e.event_type !== "gateway_offline" && e.event_type !== "silent" ? " without approval" : ""}</span>
+            </div>
+            <time dateTime={e.created_at} title={new Date(e.created_at).toLocaleString()}>{ago(e.created_at, now)}</time>
+          </li>
+        );
+      })}
     </ol>
   );
 }
 
-function History({ id, now, onClose }) {
+function History({ id, now, names, onClose }) {
   const [h, setH] = useState(null);
   const [err, setErr] = useState(null);
   useEffect(() => {
@@ -72,19 +157,32 @@ function History({ id, now, onClose }) {
     get(`/api/assets/${id}/events`, { limit: 100 }).then((r) => live && setH(r.data)).catch((e) => live && setErr(e.message));
     return () => { live = false; };
   }, [id]);
+  const st = h && (STATUS[h.asset.status] || STATUS.ok);
   const incidents = h ? h.events.filter((e) => e.is_anomaly).length : 0;
   return (
-    <aside className="drawer" role="dialog" aria-label="Asset history">
-      <button className="close" onClick={onClose} aria-label="Close history">×</button>
-      {err && <p className="empty">Couldn't load history: {err}</p>}
-      {!h && !err && <p className="empty">Loading…</p>}
-      {h && (<>
-        <h2>{h.asset.asset_name}</h2>
-        <p className="meta">{STATUS_LABEL[h.asset.status]} · home {h.asset.home_zone_id} · {incidents} incident{incidents === 1 ? "" : "s"} · last battery {h.events[0]?.battery_pct ?? "?"}%</p>
-        <EventList items={h.events.map((e) => ({ ...e, asset_name: EVENT_LABEL[e.event_type] || e.event_type }))} now={now}
-          empty="No movement recorded for this asset yet." />
-      </>)}
-    </aside>
+    <>
+      <div className="scrim" onClick={onClose} />
+      <aside className="drawer" role="dialog" aria-label="Asset history">
+        <button className="close" onClick={onClose} aria-label="Close"><Icon name="x" size={18} /></button>
+        {err && <p className="empty">Could not load this asset's history ({err}). Close and try again.</p>}
+        {!h && !err && <p className="empty">Loading history</p>}
+        {h && (<>
+          <div className="dhead">
+            <span className={`tile big ${st.tone}`}><Icon name={deviceIcon(h.asset.asset_name)} size={26} /></span>
+            <div><h3>{h.asset.asset_name}</h3><span className={`badge ${st.tone}`}>{st.label}</span></div>
+          </div>
+          <dl className="facts">
+            <div><dt>Home department</dt><dd>{names[h.asset.home_zone_id] || h.asset.home_zone_id}</dd></div>
+            <div><dt>Incidents</dt><dd>{incidents}</dd></div>
+            <div><dt>Last seen</dt><dd>{ago(h.asset.last_seen, now)}</dd></div>
+            <div><dt>Tag battery</dt><dd>{h.events[0]?.battery_pct != null ? `${h.events[0].battery_pct}%` : "unknown"}</dd></div>
+          </dl>
+          <h4>Movement history</h4>
+          <Feed items={h.events.map((e) => ({ ...e, asset_name: new Date(e.created_at).toLocaleString() }))} now={now} names={names}
+                empty="No movement recorded for this asset yet." />
+        </>)}
+      </aside>
+    </>
   );
 }
 
@@ -108,41 +206,46 @@ export default function App() {
   }, []);
   useEffect(() => { refresh(); const t = setInterval(refresh, POLL_MS); return () => clearInterval(t); }, [refresh]);
 
-  const flagged = zones.reduce((n, z) => n + z.assets.filter((a) => a.status !== "ok").length, 0);
-  const offline = zones.filter((z) => !z.gateway_online).length;
-  const problems = flagged + offline;
+  const names = Object.fromEntries(zones.map((z) => [z.zone_id, z.zone_name]));
 
   return (
     <div className="app">
       <header className="top">
-        <div>
-          <h1>Nodemon</h1>
-          <p className={problems ? "summary bad" : "summary"}>
-            {!loaded ? "Loading…" : problems
-              ? [flagged && `${flagged} asset${flagged > 1 ? "s" : ""} need attention`, offline && `${offline} gateway${offline > 1 ? "s" : ""} offline`].filter(Boolean).join(" · ")
-              : "Every asset is where it should be"}
-          </p>
-        </div>
-        <div className={`live ${error ? "down" : ""}`} role="status">
-          <span className="pulse" aria-hidden="true" />
-          {error ? "Can't reach the API" : lastOk ? `Updated ${Math.round((now - lastOk) / 1000)}s ago · ${latency} ms` : "Connecting…"}
+        <div className="wrap row">
+          <div className="brand"><Logo /><div><h1>Nodemon</h1><p>Asset tracking and theft detection</p></div></div>
+          <div className={`live ${error ? "down" : ""}`} role="status">
+            <span className="pulse" aria-hidden="true" />
+            {error ? "Connection lost" : lastOk ? `Live, updated ${Math.round((now - lastOk) / 1000)}s ago` : "Connecting"}
+            {!error && latency != null && <span className="ms">{latency} ms</span>}
+          </div>
         </div>
       </header>
-      {error && <div className="banner">Couldn't refresh: {error}. Showing the last data received. Retrying every {POLL_MS / 1000}s.</div>}
-      <main>
-        <div className="zones">{zones.map((z) => <ZoneColumn key={z.zone_id} zone={z} onPick={setPicked} />)}</div>
+
+      <StatusBand zones={zones} loaded={loaded} />
+
+      <main className="wrap">
+        {error && <div className="banner"><Icon name="alert" size={18} />Cannot reach the server ({error}). Showing the last data received and retrying every {POLL_MS / 1000} seconds.</div>}
+
+        <h2 className="sec">Departments</h2>
+        <div className="zones">
+          {zones.map((z) => <Zone key={z.zone_id} zone={z} now={now} onPick={setPicked} />)}
+          {loaded && !zones.length && <p className="empty">No departments found. Check that the database is seeded.</p>}
+        </div>
+
         <div className="panels">
           <section className="panel">
-            <h2>Recent activity</h2>
-            <EventList items={events} now={now} empty="No events yet. Move a tag near a gateway to see activity." />
+            <h2 className="sec">Recent activity</h2>
+            <Feed items={events} now={now} names={names} empty="No movement yet. Carry a tag past a gateway to see it here." />
           </section>
           <section className="panel">
-            <h2>Alert history</h2>
-            <EventList items={alerts} now={now} empty="No alerts. Unauthorised exits, tampering and silent assets appear here." />
+            <h2 className="sec">Alerts</h2>
+            <Feed items={alerts} now={now} names={names} empty="No alerts. Unapproved exits, tampering and silent devices appear here." />
           </section>
         </div>
+        <footer className="foot">Data refreshes every {POLL_MS / 1000} seconds. Select an asset to see its full history.</footer>
       </main>
-      {picked && <History id={picked} now={now} onClose={() => setPicked(null)} />}
+
+      {picked && <History id={picked} now={now} names={names} onClose={() => setPicked(null)} />}
     </div>
   );
 }
