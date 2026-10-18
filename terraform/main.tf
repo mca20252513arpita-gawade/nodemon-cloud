@@ -61,7 +61,7 @@ resource "azurerm_postgresql_flexible_server_database" "db" {
   charset   = "UTF8"
 }
 
-# 0.0.0.0 = "Allow public access from any Azure service" (Function App + Static Web Apps API need it)
+# 0.0.0.0 = "Allow public access from any Azure service" (the Function App, including its dashboard API, needs it)
 resource "azurerm_postgresql_flexible_server_firewall_rule" "azure" {
   name             = "allow-azure-services"
   server_id        = azurerm_postgresql_flexible_server.pg.id
@@ -115,20 +115,26 @@ resource "azurerm_linux_function_app" "func" {
     DATABASE_URL             = local.database_url
     OFFHOURS_ENABLED         = tostring(var.offhours_enabled)
     BUSINESS_TZ              = "Asia/Kolkata"
+    DASHBOARD_ORIGIN         = trimsuffix(azurerm_storage_account.web.primary_web_endpoint, "/")
     ACS_CONNECTION_STRING    = azurerm_communication_service.acs.primary_connection_string
     ALERT_FROM               = "DoNotReply@${azurerm_email_communication_service_domain.domain.mail_from_sender_domain}"
     ALERT_TO                 = var.alert_emails
   }
 }
 
-# ---- Static Web Apps: React dashboard + managed /api functions ----
-resource "azurerm_static_web_app" "swa" {
-  name                = "nodemon-dashboard-${local.sfx}"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.swa_location
-  sku_tier            = "Free"
-  sku_size            = "Free"
-  app_settings        = { DATABASE_URL = local.database_url }
+# ---- Dashboard: React build served from a storage static website (Static Web Apps is blocked by the student region policy) ----
+resource "azurerm_storage_account" "web" {
+  name                     = "stweb${local.sfx}"
+  resource_group_name      = azurerm_resource_group.rg.name
+  location                 = azurerm_resource_group.rg.location
+  account_tier             = "Standard"
+  account_replication_type = "LRS"
+  min_tls_version          = "TLS1_2"
+}
+resource "azurerm_storage_account_static_website" "web" {
+  storage_account_id = azurerm_storage_account.web.id
+  index_document     = "index.html"
+  error_404_document = "index.html"
 }
 
 # ---- Azure Communication Services (email alerts, Azure-managed sender domain) ----

@@ -3,10 +3,6 @@ variable "location" {
   type    = string
   default = "centralindia"
 }
-variable "swa_location" {
-  type    = string
-  default = "eastasia" # Static Web Apps is only available in a few regions
-}
 variable "pg_admin_user" {
   type    = string
   default = "nodemonadmin"

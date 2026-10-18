@@ -1,7 +1,0 @@
-{
-  "name": "nodemon-api",
-  "private": true,
-  "version": "1.0.0",
-  "main": "src/functions/*.js",
-  "dependencies": { "@azure/functions": "^4.5.0", "pg": "^8.12.0" }
-}
