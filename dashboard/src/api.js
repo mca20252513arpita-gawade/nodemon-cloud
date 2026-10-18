@@ -1,4 +1,6 @@
-// The only place that knows where data comes from. Same-origin /api in production (Static Web Apps).
+// The only place that knows where data comes from.
+// VITE_API_URL = the Function App URL when the site is hosted separately (storage static website).
+const BASE = import.meta.env.VITE_API_URL || "";
 const MOCK = import.meta.env.VITE_USE_MOCK === "true";
 const ago = (s) => new Date(Date.now() - s * 1000).toISOString();
 
@@ -40,7 +42,7 @@ export async function get(path, params = {}) {
     return { data: params.limit && Array.isArray(data) ? data.slice(0, params.limit) : data, ms: Math.round(performance.now() - t0) };
   }
   const qs = new URLSearchParams(params).toString();
-  const res = await fetch(`${path}${qs ? "?" + qs : ""}`);
+  const res = await fetch(`${BASE}${path}${qs ? "?" + qs : ""}`);
   if (!res.ok) throw new Error(`${path} returned ${res.status}`);
   return { data: await res.json(), ms: Math.round(performance.now() - t0) };
 }
