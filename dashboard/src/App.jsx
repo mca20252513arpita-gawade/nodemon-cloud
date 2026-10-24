@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { get, post } from "./api.js";
+import { get, checkout } from "./api.js";
 
 const POLL_MS = 5000;
 
@@ -314,7 +314,7 @@ export default function App() {
   const handleCheckout = useCallback(async (assetId, action, assetName) => {
     const label = action === "approve" ? "approved" : "revoked";
     try {
-      await post(`/api/checkout/${assetId}`, { action, valid_hours: 8 });
+      await checkout(assetId, action);
       setToast(`Checkout ${label} for ${assetName}`);
       refresh();
     } catch (err) {

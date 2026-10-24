@@ -47,12 +47,11 @@ export async function get(path, params = {}) {
   return { data: await res.json(), ms: Math.round(performance.now() - t0) };
 }
 
-// POST helper — used for checkout approve/revoke.
-export async function post(path, body) {
+// GET helper for checkout — avoids CORS preflight (no POST needed).
+export async function checkout(assetId, action) {
   if (MOCK) { await new Promise((r) => setTimeout(r, 80)); return { data: { ok: true }, ms: 80 }; }
-  const headers = { "Content-Type": "application/json" };
-  const qs = API_KEY ? "?key=" + encodeURIComponent(API_KEY) : "";
-  const res = await fetch(`${BASE}${path}${qs}`, { method: "POST", headers, body: JSON.stringify(body) });
-  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `${path} returned ${res.status}`); }
-  return { data: await res.json(), ms: 0 };
+  const qs = new URLSearchParams({ action, hours: 8, ...(API_KEY ? { key: API_KEY } : {}) }).toString();
+  const res = await fetch(`${BASE}/api/checkout/${assetId}?${qs}`);
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `checkout returned ${res.status}`); }
+  return { data: await res.json() };
 }

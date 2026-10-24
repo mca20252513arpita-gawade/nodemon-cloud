@@ -27,19 +27,13 @@ const limitOf = (v, fallback, max = 200) => {
 };
 
 const safe = (fn) => async (request, context) => {
-  // Handle CORS preflight for POST routes (Azure portal CORS doesn't cover POST preflights).
-  if (request.method === "OPTIONS") {
-    return { status: 204, body: "", headers: corsHeaders() };
-  }
   if (!authorized(request)) return json({ error: "Unauthorized" }, 401);
   try { return await fn(request, context); }
   catch (err) { context.error(`${request.method} ${request.url}:`, err); return json({ error: "Internal server error" }, 500); }
 };
 
 const get  = (name, route, handler) =>
-  app.http(name, { methods: ["GET"],                  authLevel: "anonymous", route, handler: safe(handler) });
-const post = (name, route, handler) =>
-  app.http(name, { methods: ["POST", "OPTIONS"],      authLevel: "anonymous", route, handler: safe(handler) });
+  app.http(name, { methods: ["GET"], authLevel: "anonymous", route, handler: safe(handler) });
 
 // Gateway-level events have no asset, so label them by zone.
 const EVENT_COLS = `e.id, e.asset_id, COALESCE(a.asset_name, 'Gateway ' || e.zone_id) AS asset_name,
@@ -110,16 +104,13 @@ get("apiAssetHistory", "assets/{id}/events", async (req) => {
   return json({ asset, events: events.rows });
 });
 
-// ---- POST /api/checkout/{id}  (approve or revoke a checkout) ----
-// Separate top-level route avoids Azure routing conflict with assets/{id}/events.
-// Body: { action: "approve" | "revoke", valid_hours?: number }
-post("apiCheckout", "checkout/{id}", async (req) => {
+// ---- GET /api/checkout/{id}?action=approve|revoke&hours=8 ----
+// Using GET avoids CORS preflight entirely (no OPTIONS needed for simple requests).
+get("apiCheckout", "checkout/{id}", async (req) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return json({ error: "asset id must be an integer" }, 400);
 
-  let body;
-  try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
-  const { action, valid_hours = 8 } = body || {};
+  const action = req.query.get("action");
   if (action !== "approve" && action !== "revoke")
     return json({ error: "action must be 'approve' or 'revoke'" }, 400);
 
@@ -133,7 +124,7 @@ post("apiCheckout", "checkout/{id}", async (req) => {
     return json({ ok: true, message: `Checkout revoked for ${asset.asset_name}` });
   }
 
-  const hours = Math.min(Math.max(Number(valid_hours) || 8, 1), 72);
+  const hours = Math.min(Math.max(Number(req.query.get("hours")) || 8, 1), 72);
   await pool.query(
     `INSERT INTO authorized_checkouts (asset_id, valid_from, valid_until)
      VALUES ($1, now(), now() + make_interval(hours => $2))`, [id, hours]);
