@@ -1,3 +1,4 @@
 subscription_id   = "00000000-0000-0000-0000-000000000000"
 pg_admin_password = "use-a-long-random-password"
+api_key           = "generate-with-openssl-rand-hex-32"
 dev_ip            = "" # your public IP, e.g. "103.x.x.x"

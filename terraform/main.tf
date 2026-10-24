@@ -116,6 +116,7 @@ resource "azurerm_linux_function_app" "func" {
     OFFHOURS_ENABLED         = tostring(var.offhours_enabled)
     BUSINESS_TZ              = "Asia/Kolkata"
     DASHBOARD_ORIGIN         = trimsuffix(azurerm_storage_account.web.primary_web_endpoint, "/")
+    API_KEY                  = var.api_key
     ACS_CONNECTION_STRING    = azurerm_communication_service.acs.primary_connection_string
     ALERT_FROM               = "DoNotReply@${azurerm_email_communication_service_domain.domain.mail_from_sender_domain}"
     ALERT_TO                 = var.alert_emails

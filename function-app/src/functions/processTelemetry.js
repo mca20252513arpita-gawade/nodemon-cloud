@@ -36,7 +36,14 @@ async function handleMessage(msg, ctx) {
 
     if (msg.event_type === "heartbeat") {
       const ids = Array.isArray(msg.tags_present) ? msg.tags_present.filter(Number.isInteger) : [];
-      if (ids.length) await client.query("UPDATE assets SET last_seen = now() WHERE tag_id = ANY($1::int[])", [ids]);
+      // last_seen_passive = "tag is in range but never had an entry event yet"
+      // only update last_seen (movement) if the asset has already entered once.
+      if (ids.length) {
+        await client.query(
+          `UPDATE assets SET last_seen_passive = now(),
+             last_seen = CASE WHEN last_seen IS NOT NULL THEN now() ELSE last_seen END
+           WHERE tag_id = ANY($1::int[])`, [ids]);
+      }
       await client.query("COMMIT");
       ctx.log(`heartbeat ${msg.gateway_id} tags=[${ids}]`);
       return;

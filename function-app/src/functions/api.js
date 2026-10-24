@@ -1,35 +1,62 @@
 // Dashboard API, hosted on the same Function App as the processor.
-// (Static Web Apps is not allowed by the student subscription's region policy.)
 import { app } from "@azure/functions";
 import { pool } from "../lib/db.js";
 
-// Read-only public API. Set DASHBOARD_ORIGIN to the static site URL to restrict CORS; "*" otherwise.
-const CORS = { "Access-Control-Allow-Origin": process.env.DASHBOARD_ORIGIN || "*" };
-const json = (body, status = 200) => ({ status, jsonBody: body, headers: CORS });
+// ---- CORS & auth ----
+// Set DASHBOARD_ORIGIN to the static site URL to restrict CORS; "*" for local dev.
+// Set API_KEY to a long random string; the dashboard must send it as X-Api-Key header.
+const CORS_ORIGIN = process.env.DASHBOARD_ORIGIN || "*";
+const API_KEY     = process.env.API_KEY || "";          // empty = disabled (local dev without key)
+
+const corsHeaders = (origin) => ({
+  "Access-Control-Allow-Origin":  origin,
+  "Access-Control-Allow-Headers": "Content-Type, X-Api-Key",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+});
+
+const json = (body, status = 200, origin = CORS_ORIGIN) =>
+  ({ status, jsonBody: body, headers: corsHeaders(origin) });
+
+// Preflight handler (OPTIONS) for every route.
+const preflight = (req) =>
+  ({ status: 204, body: "", headers: corsHeaders(req.headers.get("origin") || CORS_ORIGIN) });
+
+// Check X-Api-Key when API_KEY is configured.
+function authorized(req) {
+  if (!API_KEY) return true;                          // dev mode: no key required
+  return req.headers.get("x-api-key") === API_KEY;
+}
 
 const limitOf = (v, fallback, max = 200) => {
   const n = parseInt(v, 10);
   return Number.isFinite(n) ? Math.min(Math.max(n, 1), max) : fallback;
 };
+
 // Log real errors server-side, return a generic 500 (no DB details leak).
 const safe = (fn) => async (request, context) => {
+  if (request.method === "OPTIONS") return preflight(request);
+  if (!authorized(request)) return json({ error: "Unauthorized" }, 401);
   try { return await fn(request, context); }
   catch (err) { context.error(`${request.method} ${request.url}:`, err); return json({ error: "Internal server error" }, 500); }
 };
-const get = (name, route, handler) =>
-  app.http(name, { methods: ["GET"], authLevel: "anonymous", route, handler: safe(handler) });
+
+const get  = (name, route, handler) =>
+  app.http(name, { methods: ["GET", "OPTIONS"], authLevel: "anonymous", route, handler: safe(handler) });
+const post = (name, route, handler) =>
+  app.http(name, { methods: ["POST", "OPTIONS"], authLevel: "anonymous", route, handler: safe(handler) });
 
 // Gateway-level events have no asset, so label them by zone.
 const EVENT_COLS = `e.id, e.asset_id, COALESCE(a.asset_name, 'Gateway ' || e.zone_id) AS asset_name,
   e.zone_id, e.event_type, e.is_anomaly, e.created_at`;
 const EVENT_FROM = "FROM events e LEFT JOIN assets a ON a.asset_id = e.asset_id";
 
+// ---- GET /api/zones ----
 get("apiZones", "zones", async () => {
   const { rows } = await pool.query(`
     SELECT z.zone_id, z.zone_name, z.gateway_online,
       COALESCE(json_agg(json_build_object(
         'asset_id', a.asset_id, 'asset_name', a.asset_name, 'status', a.status,
-        'checked_out', a.checked_out, 'last_seen', a.last_seen
+        'checked_out', a.checked_out, 'last_seen', a.last_seen, 'last_seen_passive', a.last_seen_passive
       ) ORDER BY a.asset_id) FILTER (WHERE a.asset_id IS NOT NULL), '[]') AS assets
     FROM zones z
     LEFT JOIN assets a ON COALESCE(a.current_zone_id, a.home_zone_id) = z.zone_id
@@ -38,13 +65,24 @@ get("apiZones", "zones", async () => {
   return json(rows);
 });
 
+// ---- GET /api/events?limit=50&from=ISO&to=ISO ----
 get("apiEvents", "events", async (req) => {
+  const limit = limitOf(req.query.get("limit"), 50);
+  const from  = req.query.get("from");
+  const to    = req.query.get("to");
+  const conditions = [];
+  const params = [];
+  if (from) { params.push(from); conditions.push(`e.created_at >= $${params.length}`); }
+  if (to)   { params.push(to);   conditions.push(`e.created_at <= $${params.length}`); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  params.push(limit);
   const { rows } = await pool.query(
-    `SELECT ${EVENT_COLS} ${EVENT_FROM} ORDER BY e.created_at DESC, e.id DESC LIMIT $1`,
-    [limitOf(req.query.get("limit"), 50)]);
+    `SELECT ${EVENT_COLS} ${EVENT_FROM} ${where} ORDER BY e.created_at DESC, e.id DESC LIMIT $${params.length}`,
+    params);
   return json(rows);
 });
 
+// ---- GET /api/alerts?limit=20 ----
 get("apiAlerts", "alerts", async (req) => {
   const { rows } = await pool.query(
     `SELECT ${EVENT_COLS} ${EVENT_FROM} WHERE e.is_anomaly ORDER BY e.created_at DESC, e.id DESC LIMIT $1`,
@@ -52,20 +90,67 @@ get("apiAlerts", "alerts", async (req) => {
   return json(rows);
 });
 
+// ---- GET /api/assets/{id}/events?limit=100&from=ISO&to=ISO ----
 get("apiAssetHistory", "assets/{id}/events", async (req) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return json({ error: "asset id must be an integer" }, 400);
   const asset = (await pool.query(
-    `SELECT asset_id, asset_name, status, home_zone_id, current_zone_id, checked_out, last_seen
+    `SELECT asset_id, asset_name, status, home_zone_id, current_zone_id, checked_out, last_seen, last_seen_passive
      FROM assets WHERE asset_id = $1`, [id])).rows[0];
   if (!asset) return json({ error: "asset not found" }, 404);
-  const events = (await pool.query(
+
+  const limit = limitOf(req.query.get("limit"), 100, 500);
+  const from  = req.query.get("from");
+  const to    = req.query.get("to");
+  const conditions = ["asset_id = $1"];
+  const params = [id];
+  if (from) { params.push(from); conditions.push(`created_at >= $${params.length}`); }
+  if (to)   { params.push(to);   conditions.push(`created_at <= $${params.length}`); }
+  params.push(limit);
+  const events = await pool.query(
     `SELECT id, zone_id, event_type, is_anomaly, motion_flag, tamper_flag, battery_pct, rssi, created_at
-     FROM events WHERE asset_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2`,
-    [id, limitOf(req.query.get("limit"), 100, 500)]));
+     FROM events WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC, id DESC LIMIT $${params.length}`,
+    params);
   return json({ asset, events: events.rows });
 });
 
+// ---- POST /api/assets/{id}/checkout ----
+// Body: { action: "approve" | "revoke", valid_hours?: number }
+// Creates or removes an authorized_checkout row for the asset.
+post("apiCheckout", "assets/{id}/checkout", async (req) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) return json({ error: "asset id must be an integer" }, 400);
+
+  let body;
+  try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
+  const { action, valid_hours = 8 } = body || {};
+  if (action !== "approve" && action !== "revoke") return json({ error: "action must be 'approve' or 'revoke'" }, 400);
+
+  const asset = (await pool.query(
+    "SELECT asset_id, asset_name FROM assets WHERE asset_id = $1", [id])).rows[0];
+  if (!asset) return json({ error: "asset not found" }, 404);
+
+  if (action === "revoke") {
+    // Delete any active checkout and mark asset as not checked out.
+    await pool.query(
+      "DELETE FROM authorized_checkouts WHERE asset_id = $1 AND valid_until > now()", [id]);
+    await pool.query(
+      "UPDATE assets SET checked_out = false WHERE asset_id = $1", [id]);
+    return json({ ok: true, message: `Checkout revoked for ${asset.asset_name}` });
+  }
+
+  // approve: insert a new window, valid from now for valid_hours hours.
+  const hours = Math.min(Math.max(Number(valid_hours) || 8, 1), 72);
+  await pool.query(
+    `INSERT INTO authorized_checkouts (asset_id, valid_from, valid_until)
+     VALUES ($1, now(), now() + make_interval(hours => $2))`,
+    [id, hours]);
+  await pool.query(
+    "UPDATE assets SET checked_out = true WHERE asset_id = $1", [id]);
+  return json({ ok: true, message: `Checkout approved for ${asset.asset_name} (${hours}h)` });
+});
+
+// ---- GET /api/health ----
 get("apiHealth", "health", async () => {
   await pool.query("SELECT 1");
   return json({ ok: true });

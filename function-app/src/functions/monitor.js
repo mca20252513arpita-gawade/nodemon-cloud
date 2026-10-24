@@ -3,15 +3,16 @@ import { pool } from "../lib/db.js";
 import { cfg } from "../lib/config.js";
 import { sendAlert } from "../lib/alerts.js";
 
-// Runs every 2 minutes. Implements the BRD's "going silent" rules:
-//  1. a gateway that stopped sending heartbeats is flagged offline (once);
-//  2. an asset that should be in a zone but was not reported for a while is flagged missing.
+// Runs every 30 s for fast online→offline detection.
+// 1. A gateway whose last_heartbeat is NULL (never seen) or stale → flagged offline once.
+// 2. An asset not reported for a while → flagged missing (skips checked-out and offline-gateway assets).
 async function run(ctx) {
   // 1. Gateways. UPDATE ... RETURNING makes the flag-once behaviour atomic.
+  //    NULL last_heartbeat means "never seen" → treat as offline too.
   const gws = await pool.query(
     `UPDATE zones SET gateway_online = false
-     WHERE gateway_online AND last_heartbeat IS NOT NULL
-       AND last_heartbeat < now() - make_interval(mins => $1)
+     WHERE gateway_online
+       AND (last_heartbeat IS NULL OR last_heartbeat < now() - make_interval(mins => $1))
      RETURNING zone_id, zone_name`, [cfg.gatewayOfflineMin]);
   for (const z of gws.rows) {
     await pool.query(
@@ -42,7 +43,7 @@ async function run(ctx) {
 }
 
 app.timer("monitor", {
-  schedule: "0 */2 * * * *",
+  schedule: "*/30 * * * * *",   // every 30 s: fast online→offline detection (was 2 min)
   runOnStartup: false,
   handler: async (_timer, ctx) => {
     try { await run(ctx); } catch (err) { ctx.error("monitor failed (next run retries):", err.message); }

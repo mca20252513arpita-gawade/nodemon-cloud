@@ -90,3 +90,32 @@ main { padding-top: 26px; padding-bottom: 40px; }
 
 :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .pulse, .drawer, .scrim { animation: none; } }
+
+/* ---- checkout row (inside zone asset list) ---- */
+.checkout-row { padding: 0 14px 10px; display: flex; justify-content: flex-end; }
+.co-btn { display: inline-flex; align-items: center; gap: 5px; font-size: .78rem; font-weight: 600;
+  padding: 4px 10px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg);
+  cursor: pointer; transition: background .15s, border-color .15s; white-space: nowrap; }
+.co-btn:hover { background: var(--surface); border-color: var(--blue); color: var(--blue); }
+.co-btn.approve { color: var(--ok); border-color: var(--ok); }
+.co-btn.approve:hover { background: var(--ok-bg); }
+.co-btn.revoke  { color: var(--bad); border-color: var(--bad); }
+.co-btn.revoke:hover  { background: var(--bad-bg); }
+
+/* ---- date filter (history drawer) ---- */
+.date-filter { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--bg); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+.date-filter label { display: flex; align-items: center; gap: 6px; font-size: .8rem; color: var(--muted); }
+.date-filter input[type="date"] { font: inherit; font-size: .82rem; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  padding: 3px 7px; cursor: pointer; }
+.date-filter input[type="date"]:focus { outline: 2px solid var(--blue); }
+.muted-badge { font-size: .72rem; font-weight: 600; color: var(--muted);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 99px; padding: 2px 8px; margin-left: 6px; }
+
+/* ---- toast notification ---- */
+.toast { position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: #fff; font-size: .88rem; font-weight: 600;
+  padding: 10px 22px; border-radius: 99px; z-index: 20; white-space: nowrap;
+  box-shadow: 0 4px 20px rgba(0,0,0,.25); animation: slide-up .2s ease-out; pointer-events: none; }
+@keyframes slide-up { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }

@@ -29,3 +29,9 @@ variable "alert_emails" {
   default     = ""
   description = "Comma-separated alert recipients."
 }
+
+variable "api_key" {
+  type        = string
+  sensitive   = true
+  description = "Secret key the dashboard sends as X-Api-Key header. Generate with: openssl rand -hex 32"
+}

@@ -105,8 +105,9 @@ void updateStateMachine() {
     if (t.present && now - t.lastSeen > ABSENT_MS) { t.present = false; t.hits = 0; queueEvent("exit", t); }
     if (t.tamperPending && now - t.lastTamperSent > TAMPER_COOLDOWN_MS) {
       queueEvent("tamper", t); t.lastTamperSent = now;
+      t.tamperPending = false;   // only clear after a successful send, not on cooldown suppression
     }
-    t.tamperPending = false; t.seen = false;
+    t.seen = false;
   }
 }
 
