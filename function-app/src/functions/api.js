@@ -8,22 +8,18 @@ import { pool } from "../lib/db.js";
 const CORS_ORIGIN = process.env.DASHBOARD_ORIGIN || "*";
 const API_KEY     = process.env.API_KEY || "";          // empty = disabled (local dev without key)
 
-const corsHeaders = (origin) => ({
-  "Access-Control-Allow-Origin":  origin,
+const corsHeaders = () => ({
+  "Access-Control-Allow-Origin":  CORS_ORIGIN,
   "Access-Control-Allow-Headers": "Content-Type, X-Api-Key",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 });
 
-const json = (body, status = 200, origin = CORS_ORIGIN) =>
-  ({ status, jsonBody: body, headers: corsHeaders(origin) });
-
-// Preflight handler (OPTIONS) for every route.
-const preflight = (req) =>
-  ({ status: 204, body: "", headers: corsHeaders(req.headers.get("origin") || CORS_ORIGIN) });
+const json = (body, status = 200) =>
+  ({ status, jsonBody: body, headers: corsHeaders() });
 
 // Check X-Api-Key when API_KEY is configured.
 function authorized(req) {
-  if (!API_KEY) return true;                          // dev mode: no key required
+  if (!API_KEY) return true;
   return req.headers.get("x-api-key") === API_KEY;
 }
 
@@ -34,16 +30,15 @@ const limitOf = (v, fallback, max = 200) => {
 
 // Log real errors server-side, return a generic 500 (no DB details leak).
 const safe = (fn) => async (request, context) => {
-  if (request.method === "OPTIONS") return preflight(request);
   if (!authorized(request)) return json({ error: "Unauthorized" }, 401);
   try { return await fn(request, context); }
   catch (err) { context.error(`${request.method} ${request.url}:`, err); return json({ error: "Internal server error" }, 500); }
 };
 
 const get  = (name, route, handler) =>
-  app.http(name, { methods: ["GET", "OPTIONS"], authLevel: "anonymous", route, handler: safe(handler) });
+  app.http(name, { methods: ["GET"], authLevel: "anonymous", route, handler: safe(handler) });
 const post = (name, route, handler) =>
-  app.http(name, { methods: ["POST", "OPTIONS"], authLevel: "anonymous", route, handler: safe(handler) });
+  app.http(name, { methods: ["POST"], authLevel: "anonymous", route, handler: safe(handler) });
 
 // Gateway-level events have no asset, so label them by zone.
 const EVENT_COLS = `e.id, e.asset_id, COALESCE(a.asset_name, 'Gateway ' || e.zone_id) AS asset_name,
