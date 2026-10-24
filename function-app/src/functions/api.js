@@ -17,10 +17,11 @@ const corsHeaders = () => ({
 const json = (body, status = 200) =>
   ({ status, jsonBody: body, headers: corsHeaders() });
 
-// Check X-Api-Key when API_KEY is configured.
+// Check X-Api-Key header OR ?key= query param when API_KEY is configured.
 function authorized(req) {
   if (!API_KEY) return true;
-  return req.headers.get("x-api-key") === API_KEY;
+  return req.headers.get("x-api-key") === API_KEY ||
+         req.query.get("key") === API_KEY;
 }
 
 const limitOf = (v, fallback, max = 200) => {

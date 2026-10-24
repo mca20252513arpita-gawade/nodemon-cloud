@@ -40,10 +40,9 @@ export async function get(path, params = {}) {
     return { data: params.limit && Array.isArray(data) ? data.slice(0, params.limit) : data, ms: Math.round(performance.now() - t0) };
   }
   const qs = new URLSearchParams(
-    Object.fromEntries(Object.entries(params).filter(([, v]) => v != null && v !== ""))
+    Object.fromEntries(Object.entries({ ...params, ...(API_KEY ? { key: API_KEY } : {}) }).filter(([, v]) => v != null && v !== ""))
   ).toString();
-  const headers = API_KEY ? { "X-Api-Key": API_KEY } : {};
-  const res = await fetch(`${BASE}${path}${qs ? "?" + qs : ""}`, { headers });
+  const res = await fetch(`${BASE}${path}${qs ? "?" + qs : ""}`);
   if (!res.ok) throw new Error(`${path} returned ${res.status}`);
   return { data: await res.json(), ms: Math.round(performance.now() - t0) };
 }
@@ -51,8 +50,9 @@ export async function get(path, params = {}) {
 // POST helper — used for checkout approve/revoke.
 export async function post(path, body) {
   if (MOCK) { await new Promise((r) => setTimeout(r, 80)); return { data: { ok: true }, ms: 80 }; }
-  const headers = { "Content-Type": "application/json", ...(API_KEY ? { "X-Api-Key": API_KEY } : {}) };
-  const res = await fetch(`${BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  const headers = { "Content-Type": "application/json" };
+  const qs = API_KEY ? "?key=" + encodeURIComponent(API_KEY) : "";
+  const res = await fetch(`${BASE}${path}${qs}`, { method: "POST", headers, body: JSON.stringify(body) });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || `${path} returned ${res.status}`); }
   return { data: await res.json(), ms: 0 };
 }
