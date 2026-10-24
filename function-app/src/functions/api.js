@@ -3,25 +3,22 @@ import { app } from "@azure/functions";
 import { pool } from "../lib/db.js";
 
 // ---- CORS & auth ----
-// Set DASHBOARD_ORIGIN to the static site URL to restrict CORS; "*" for local dev.
-// Set API_KEY to a long random string; the dashboard must send it as X-Api-Key header.
 const CORS_ORIGIN = process.env.DASHBOARD_ORIGIN || "*";
-const API_KEY     = process.env.API_KEY || "";          // empty = disabled (local dev without key)
+const API_KEY     = process.env.API_KEY || "";   // empty = disabled (local dev)
 
 const corsHeaders = () => ({
   "Access-Control-Allow-Origin":  CORS_ORIGIN,
-  "Access-Control-Allow-Headers": "Content-Type, X-Api-Key",
+  "Access-Control-Allow-Headers": "Content-Type",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
 });
 
 const json = (body, status = 200) =>
   ({ status, jsonBody: body, headers: corsHeaders() });
 
-// Check X-Api-Key header OR ?key= query param when API_KEY is configured.
+// Auth: key sent as ?key= query param (avoids Azure header-stripping on CORS).
 function authorized(req) {
   if (!API_KEY) return true;
-  return req.headers.get("x-api-key") === API_KEY ||
-         req.query.get("key") === API_KEY;
+  return req.query.get("key") === API_KEY;
 }
 
 const limitOf = (v, fallback, max = 200) => {
@@ -29,17 +26,20 @@ const limitOf = (v, fallback, max = 200) => {
   return Number.isFinite(n) ? Math.min(Math.max(n, 1), max) : fallback;
 };
 
-// Log real errors server-side, return a generic 500 (no DB details leak).
 const safe = (fn) => async (request, context) => {
+  // Handle CORS preflight for POST routes (Azure portal CORS doesn't cover POST preflights).
+  if (request.method === "OPTIONS") {
+    return { status: 204, body: "", headers: corsHeaders() };
+  }
   if (!authorized(request)) return json({ error: "Unauthorized" }, 401);
   try { return await fn(request, context); }
   catch (err) { context.error(`${request.method} ${request.url}:`, err); return json({ error: "Internal server error" }, 500); }
 };
 
 const get  = (name, route, handler) =>
-  app.http(name, { methods: ["GET"], authLevel: "anonymous", route, handler: safe(handler) });
+  app.http(name, { methods: ["GET"],                  authLevel: "anonymous", route, handler: safe(handler) });
 const post = (name, route, handler) =>
-  app.http(name, { methods: ["POST"], authLevel: "anonymous", route, handler: safe(handler) });
+  app.http(name, { methods: ["POST", "OPTIONS"],      authLevel: "anonymous", route, handler: safe(handler) });
 
 // Gateway-level events have no asset, so label them by zone.
 const EVENT_COLS = `e.id, e.asset_id, COALESCE(a.asset_name, 'Gateway ' || e.zone_id) AS asset_name,
@@ -110,39 +110,34 @@ get("apiAssetHistory", "assets/{id}/events", async (req) => {
   return json({ asset, events: events.rows });
 });
 
-// ---- POST /api/assets/{id}/checkout ----
+// ---- POST /api/checkout/{id}  (approve or revoke a checkout) ----
+// Separate top-level route avoids Azure routing conflict with assets/{id}/events.
 // Body: { action: "approve" | "revoke", valid_hours?: number }
-// Creates or removes an authorized_checkout row for the asset.
-post("apiCheckout", "assets/{id}/checkout", async (req) => {
+post("apiCheckout", "checkout/{id}", async (req) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isInteger(id)) return json({ error: "asset id must be an integer" }, 400);
 
   let body;
   try { body = await req.json(); } catch { return json({ error: "Invalid JSON body" }, 400); }
   const { action, valid_hours = 8 } = body || {};
-  if (action !== "approve" && action !== "revoke") return json({ error: "action must be 'approve' or 'revoke'" }, 400);
+  if (action !== "approve" && action !== "revoke")
+    return json({ error: "action must be 'approve' or 'revoke'" }, 400);
 
   const asset = (await pool.query(
     "SELECT asset_id, asset_name FROM assets WHERE asset_id = $1", [id])).rows[0];
   if (!asset) return json({ error: "asset not found" }, 404);
 
   if (action === "revoke") {
-    // Delete any active checkout and mark asset as not checked out.
-    await pool.query(
-      "DELETE FROM authorized_checkouts WHERE asset_id = $1 AND valid_until > now()", [id]);
-    await pool.query(
-      "UPDATE assets SET checked_out = false WHERE asset_id = $1", [id]);
+    await pool.query("DELETE FROM authorized_checkouts WHERE asset_id = $1 AND valid_until > now()", [id]);
+    await pool.query("UPDATE assets SET checked_out = false WHERE asset_id = $1", [id]);
     return json({ ok: true, message: `Checkout revoked for ${asset.asset_name}` });
   }
 
-  // approve: insert a new window, valid from now for valid_hours hours.
   const hours = Math.min(Math.max(Number(valid_hours) || 8, 1), 72);
   await pool.query(
     `INSERT INTO authorized_checkouts (asset_id, valid_from, valid_until)
-     VALUES ($1, now(), now() + make_interval(hours => $2))`,
-    [id, hours]);
-  await pool.query(
-    "UPDATE assets SET checked_out = true WHERE asset_id = $1", [id]);
+     VALUES ($1, now(), now() + make_interval(hours => $2))`, [id, hours]);
+  await pool.query("UPDATE assets SET checked_out = true WHERE asset_id = $1", [id]);
   return json({ ok: true, message: `Checkout approved for ${asset.asset_name} (${hours}h)` });
 });
 

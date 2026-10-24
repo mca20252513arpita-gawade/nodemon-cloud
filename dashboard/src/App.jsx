@@ -314,7 +314,7 @@ export default function App() {
   const handleCheckout = useCallback(async (assetId, action, assetName) => {
     const label = action === "approve" ? "approved" : "revoked";
     try {
-      await post(`/api/assets/${assetId}/checkout`, { action, valid_hours: 8 });
+      await post(`/api/checkout/${assetId}`, { action, valid_hours: 8 });
       setToast(`Checkout ${label} for ${assetName}`);
       refresh();
     } catch (err) {
