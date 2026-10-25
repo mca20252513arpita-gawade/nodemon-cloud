@@ -21,9 +21,9 @@
 constexpr uint16_t COMPANY_ID        = 0xFFFF;
 constexpr int      RSSI_MIN_DBM      = -80;     // ignore adverts weaker than this (outside the zone)
 constexpr uint8_t  ENTER_HITS        = 2;       // consecutive scans seen before "entry"
-constexpr uint32_t ABSENT_MS         = 30000;   // unseen this long -> "exit" (> tag sleep of 10-15 s)
+constexpr uint32_t ABSENT_MS         = 15000;   // demo: 15s unseen → exit (was 30s)
 constexpr uint32_t SCAN_SECONDS      = 2;
-constexpr uint32_t HEARTBEAT_MS      = 120000;
+constexpr uint32_t HEARTBEAT_MS      = 30000;   // demo: heartbeat every 30s (was 120s)
 constexpr uint32_t TAMPER_COOLDOWN_MS = 10000;  // dedup repeated tamper reports
 constexpr uint32_t SAS_TTL_S         = 86400;
 constexpr size_t   MAX_TAGS          = 16;
