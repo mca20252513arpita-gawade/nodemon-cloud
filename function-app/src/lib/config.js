@@ -7,5 +7,5 @@ export const cfg = {
     days: (process.env.BUSINESS_DAYS || "Mon,Tue,Wed,Thu,Fri,Sat").split(",").map((d) => d.trim()),
   },
   gatewayOfflineMin: Number(process.env.GATEWAY_OFFLINE_MINUTES ?? 6),
-  assetSilentMin: Number(process.env.ASSET_SILENT_MINUTES ?? 15),
+  assetSilentMin: Number(process.env.ASSET_SILENT_MINUTES ?? 5),
 };

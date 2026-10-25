@@ -22,13 +22,14 @@ async function run(ctx) {
       .catch((e) => ctx.error("sendAlert failed:", e));
   }
 
-  // 2. Assets. Skip checked-out assets and assets whose gateway is offline (already one alert).
+  // 2. Assets silent: flag missing if not seen for assetSilentMin.
+  //    We intentionally DO check assets whose gateway is offline — a silent asset
+  //    behind an offline gateway is MORE suspicious, not less.
+  //    Checked-out assets are skipped (they are knowingly absent).
   const assets = await pool.query(
     `UPDATE assets a SET status = 'missing'
      WHERE a.status = 'ok' AND NOT a.checked_out AND a.last_seen IS NOT NULL
        AND a.last_seen < now() - make_interval(mins => $1)
-       AND NOT EXISTS (SELECT 1 FROM zones z
-                       WHERE z.zone_id = COALESCE(a.current_zone_id, a.home_zone_id) AND NOT z.gateway_online)
      RETURNING a.asset_id, a.asset_name, COALESCE(a.current_zone_id, a.home_zone_id) AS zone_id,
        (SELECT zone_name FROM zones z WHERE z.zone_id = COALESCE(a.current_zone_id, a.home_zone_id)) AS zone_name`,
     [cfg.assetSilentMin]);
